@@ -1,0 +1,114 @@
+﻿@model GamiPort.Models.ViewModels.TopbarVM
+@using GamiPort.Services
+@inject ICurrentUserService CurrentUser
+
+<header class="topbar1 navbar navbar-expand-lg navbar-light bg-light border-bottom sticky-top">
+    <div class="container-fluid">
+        <button class="navbar-toggler d-lg-none me-2" type="button"
+                data-bs-toggle="offcanvas" data-bs-target="#mainOffcanvas"
+                aria-controls="mainOffcanvas" aria-label="Open menu">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+
+        <a class="navbar-brand fw-semibold d-flex align-items-center gap-2" href="~/">
+            <img src="~/picture/Gamiport.png" alt="Logo" height="24" />
+            GamiPort
+        </a>
+
+        <ul class="navbar-nav ms-auto align-items-lg-center">
+            @* Nick鐘更新購物車（加上cart icon） *@
+            <a asp-area="OnlineStore" asp-controller="Cart" asp-action="Index"
+               class="nav-link position-relative">
+                <i class="bi bi-cart-plus"></i> 購物車
+                <span id="navCartBadge"
+                      class="position-absolute translate-middle badge rounded-pill bg-danger"
+                      style="top:0.2rem; right:-0.6rem; min-width:1.4rem;">
+                    <span class="badge-count">0</span>
+                </span>
+            </a>
+            @* Nick鐘刪除舊的我的錢包（無icon）
+            <li class="nav-item d-none d-md-block"><a class="nav-link" a asp-area="" asp-controller="" asp-action="">我的錢包</a></li>
+            *@
+            @* Nick鐘新增我的錢包（加上wallet icon） *@
+            <li class="nav-item d-none d-md-block">
+                <a class="nav-link" asp-area="MiniGame" asp-controller="Wallet" asp-action="Index">
+                    <i class="bi bi-wallet"></i> 我的錢包
+                </a>
+            </li>
+            @* Nick鐘刪除舊的我的小屋（無icon）
+            <li class="nav-item d-none d-md-block"><a class="nav-link" a asp-area="MemberManagement" asp-controller="MyHome" asp-action="Index">我的小屋</a></li>
+            *@
+            @* Nick鐘新增我的小屋（加上house-heart icon） *@
+            <li class="nav-item d-none d-md-block">
+                <a class="nav-link" asp-area="MemberManagement" asp-controller="MyHome" asp-action="Index">
+                    <i class="bi bi-house-heart"></i> 我的小屋
+                </a>
+            </li>
+
+            @* ✅ 改成用 CurrentUser.IsAuthenticated 讀取 HttpContext *@
+            @if (CurrentUser.IsAuthenticated)
+            {
+                <li class="nav-item dropdown ms-2">
+                    <a class="nav-link dropdown-toggle d-flex align-items-center" href="#" id="userMenu"
+                       role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-person-circle me-1"></i>
+                        <span>@(CurrentUser.NickName ?? "使用者")</span>
+                    </a>
+
+                    <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userMenu">
+                        <li class="dropdown-header text-secondary small">
+                            已登入：@(CurrentUser.NickName ?? "使用者")
+                        </li>
+
+                        <!-- ✅ 新增：檢視 / 編輯個人資料 -->
+                        <li>
+                            <a class="dropdown-item" asp-area="Login" asp-controller="Introduce" asp-action="Details">
+                                <i class="bi bi-person-badge me-2"></i> 檢視個人資料
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item" asp-area="Login" asp-controller="Introduce" asp-action="Edit">
+                                <i class="bi bi-pencil-square me-2"></i> 編輯個人資料
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item" asp-area="Login" asp-controller="Password" asp-action="Edit">
+                                <i class="bi bi-pencil-square me-2"></i> 編輯個人密碼
+                            </a>
+                        </li>
+
+                        <li><hr class="dropdown-divider" /></li>
+
+                        <!-- 🚪 登出 -->
+                        <li>
+                            <form asp-area="Login" asp-controller="Login" asp-action="Logout" method="post" class="px-2 py-1 mb-0">
+                                @Html.AntiForgeryToken()
+                                <button type="submit" class="dropdown-item text-danger w-100">
+                                    <i class="bi bi-box-arrow-right me-2"></i> 登出
+                                </button>
+                            </form>
+                        </li>
+                    </ul>
+                </li>
+            }
+            else
+            {
+                <li class="nav-item ms-2">
+                    <a class="btn btn-primary" asp-area="Login" asp-controller="Login" asp-action="Login">
+                        <i class="bi bi-box-arrow-in-right me-1"></i> 登入
+                    </a>
+                </li>
+            }
+        </ul>
+    </div>
+</header>
+
+<div class="offcanvas offcanvas-start offcanvas-main" tabindex="-1" id="mainOffcanvas" aria-labelledby="mainOffcanvasLabel">
+    <div class="offcanvas-header">
+        <h6 class="offcanvas-title" id="mainOffcanvasLabel">主選單</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body p-0">
+        @await Html.PartialAsync("_Sidebar")
+    </div>
+</div>

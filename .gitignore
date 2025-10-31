@@ -1,0 +1,13 @@
+﻿# Visual Studio local cache
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# .NET build outputs
+**/bin/
+**/obj/
+
+# Ignore local nul windows system file
+**/nul

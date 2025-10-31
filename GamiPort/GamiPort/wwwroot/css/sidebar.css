@@ -1,0 +1,86 @@
+﻿/* Sidebar：icon-only collapsed 行為 */
+.sidebar-header {
+    height: 48px;
+    padding: .5rem;
+    position: sticky;
+    top: 0;
+    background: #fff;
+    z-index: 2
+}
+
+.sidebar-toggle {
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center
+}
+
+/* item 基本 */
+.layout-sidebar .list-group-item {
+    border: 0
+}
+
+    .layout-sidebar .list-group-item .bi {
+        font-size: 1.25rem;
+        width: 1.5rem;
+        text-align: center;
+        flex: 0 0 1.5rem;
+    }
+
+/* Nick鐘新增：統一 SVG 圖片的大小（與 Bootstrap Icon 一致，都是 1.5rem = 24px） */
+.layout-sidebar .list-group-item img.flex-shrink-0 {
+    width: 1.5rem !important;      /* 覆蓋 HTML 中的 width="16" */
+    height: 1.5rem !important;     /* 覆蓋 HTML 中的 height="16" */
+    flex: 0 0 1.5rem !important;   /* 固定尺寸，不伸縮 */
+    font-size: 1.25rem !important; /* 與 Bootstrap Icon 對齊 */
+}
+
+/* Nick鐘新增：針對不同 SVG 檔案進行微調（因為各 SVG 的 viewBox 大小不同） */
+/* 寵物冒險 paw.svg - 縮小一點 */
+.layout-sidebar .list-group-item img[src*="paw.svg"] {
+    transform: scale(0.85) !important;
+}
+
+/* 交友 add_friends.svg - 放大更多 */
+.layout-sidebar .list-group-item img[src*="add_friends.svg"] {
+    transform: scale(1.45) !important;
+}
+
+/* collapsed：只顯示 icon */
+html.sidebar-collapsed .layout-sidebar .list-group-item {
+    justify-content: center;
+    gap: 0;
+    padding: .75rem .5rem
+}
+
+    html.sidebar-collapsed .layout-sidebar .list-group-item .label {
+        display: none !important
+    }
+
+html.sidebar-collapsed .layout-sidebar .sidebar-title,
+html.sidebar-collapsed .layout-sidebar .sidebar-section {
+    display: none !important;
+    height: 0;
+    overflow: hidden
+}
+
+html.sidebar-collapsed .layout-sidebar .sidebar-header .sidebar-title {
+    display: none !important
+}
+
+/* Offcanvas (mobile) */
+.offcanvas-main {
+    width: 280px
+}
+
+    .offcanvas-main .sidebar-header {
+        display: none
+    }
+
+    .offcanvas-main .list-group-item {
+        padding: .75rem 1rem
+    }
+
+        .offcanvas-main .list-group-item:hover {
+            background: #f8f9fa
+        }

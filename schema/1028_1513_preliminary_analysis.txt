@@ -1,0 +1,751 @@
+● GameSpace（後台）與 GamiPort（前台）平台差異完整戰略分析 --- **analyzed by claude code**
+
+  基於多代理對兩個代碼庫的深入探索，以下是您從後台平台轉移到前台平台的完整戰略指南。
+
+  ---
+  執行摘要
+
+  GamiPort MiniGame Area 狀態：約完成 5%（僅框架）
+  GameSpace MiniGame Area 狀態：完成 100%（生產就緒）
+
+  關鍵發現：GamiPort 的 MiniGame area 本質上是一個空架構，只有 5 個檔案，而 GameSpace 有 300+
+  個檔案。這是一個全新實作的機會，您可以選擇性地移植 GameSpace 已驗證的模式。
+
+  ---
+  第一部分：結構差異總覽
+
+  1.1 檔案數量比較
+
+  | 組件           | GameSpace                    | GamiPort            | 差距           |
+  |--------------|------------------------------|---------------------|--------------|
+  | 控制器          | 32 + 1 基底                    | 1（僅 HomeController） | 缺少 31 個控制器   |
+  | 服務           | 89 個檔案（36 介面 + 52 實作 + 1 選項） | 0                   | 完全缺少服務層      |
+  | 模型/ViewModel | 49 個檔案                       | 0                   | 缺少所有領域模型     |
+  | 視圖           | 100+ 視圖檔案                    | 5（最小框架）             | 缺少 95+ 個視圖   |
+  | 過濾器          | 4 個自訂過濾器                     | 0                   | 缺少所有安全/錯誤過濾器 |
+  | 常數           | 4 個常數檔案                      | 0                   | 未定義常數        |
+  | 配置           | ServiceExtensions.cs         | 0                   | 無服務註冊        |
+
+  1.2 架構成熟度
+
+  GameSpace（後台平台）：
+  ├── 完整 RBAC 與 ManagerPermissionService
+  ├── 自訂授權過濾器
+  ├── Query/Mutation 服務分離（類 CQRS）
+  ├── 完整錯誤處理（ProblemDetails）
+  ├── 冪等性保護
+  ├── MiniGameBaseController 包含 20+ 工具方法
+  └── 生產就緒，具備稽核追蹤
+
+  GamiPort（前台平台）：
+  ├── 基本 cookie 驗證
+  ├── 無自訂過濾器
+  ├── MiniGame 無服務層
+  ├── 無授權政策
+  ├── 標準 MVC 錯誤處理
+  └── 僅開發框架
+
+  ---
+  第二部分：驗證與授權差異
+
+  2.1 驗證方案
+
+  | 面向        | GameSpace（後台）                     | GamiPort（前台）                    |
+  |-----------|-----------------------------------|---------------------------------|
+  | Cookie 名稱 | GameSpace.Admin                   | GamiPort.User                   |
+  | 方案        | 自訂 AdminCookie                    | 預設 CookieAuthenticationDefaults |
+  | 會話長度      | 4 小時                              | 7 天                             |
+  | 身份系統      | 雙重：ASP.NET Identity + AdminCookie | 僅 Cookie（無 Identity）            |
+  | 用戶模型      | Manager（管理員）vs User（會員）           | 僅 User                          |
+  | 登入路徑      | /Login                            | /Login/Login/Login              |
+
+  2.2 Claims 結構
+
+  GameSpace Claims（管理員/經理）：
+  new Claim("IsManager", "true"),              // 關鍵管理員標記
+  new Claim("mgr:id", managerId),              // 經理 ID
+  new Claim("perm:Admin", "true"),             // 權限作為 claims
+  new Claim("perm:Pet", "true"),
+  new Claim("perm:Shopping", "true"),
+  new Claim(ClaimTypes.Role, roleName)         // 基於角色
+
+  GamiPort Claims（用戶）：
+  new Claim("AppUserId", userId),              // 主要用戶識別符
+  new Claim(ClaimTypes.NameIdentifier, userId), // 標準 claim
+  new Claim("UserNickName", nickname),
+  new Claim("EmailConfirmed", "true/false")
+  // 無權限 claims，無角色 claims，無管理員標記
+
+  2.3 用戶上下文抽象
+
+  GameSpace：IUserContextReader → AuthSnapshot
+  // 返回具有管理員/用戶區分的快照
+  AuthSnapshot snap = reader.Read(httpContext);
+  bool isAdmin = snap.IsManager;
+  int? managerId = snap.ManagerId;
+  int? userId = snap.UserId;
+
+  // 解析順序：Items → Cookies → Claims（三層回退）
+
+  GamiPort：IAppCurrentUser（支援非同步）
+  // 基於屬性，具備非同步 DB 回退
+  var me = httpContext.RequestServices.GetRequiredService<IAppCurrentUser>();
+  int userId = me.UserId;                    // 快速路徑（僅 claims）
+  int userId = await me.GetUserIdAsync();    // 非同步路徑（可能查詢 DB）
+
+  // 解析順序：Items → Claims → DB 映射（非同步）
+
+  戰略意義：GamiPort 在其驗證層中沒有「管理員」vs「用戶」的內建概念。如果您需要在 GamiPort
+  中實作管理員功能，需要實作單獨的授權策略。
+
+  ---
+  第三部分：資料庫與 DbContext 差異
+
+  3.1 DbContext 註冊
+
+  GameSpace（2 個 DbContext）：
+  // 1. ApplicationDbContext - ASP.NET Identity（IdentityUser、Roles 等）
+  builder.Services.AddDbContext<ApplicationDbContext>(opt =>
+      opt.UseSqlServer(identityConn));
+
+  // 2. GameSpacedatabaseContext - 業務邏輯（Users、Pet、Wallet 等）
+  builder.Services.AddDbContext<GameSpacedatabaseContext>(opt =>
+      opt.UseSqlServer(gameSpaceConn));
+
+  // Identity 整合
+  builder.Services.AddDefaultIdentity<IdentityUser>(...)
+      .AddEntityFrameworkStores<ApplicationDbContext>();
+
+  GamiPort（1 個 DbContext）：
+  // 僅 GameSpacedatabaseContext - 無 Identity
+  builder.Services.AddDbContext<GameSpacedatabaseContext>(opt =>
+      opt.UseSqlServer(gameSpaceConn));
+
+  // 不使用 Identity 的手動密碼雜湊
+  builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+
+  戰略意義：兩個平台共享相同的 GameSpacedatabaseContext 並可訪問相同的 20 個表。區別在於 GameSpace 使用 Identity
+  進行管理員驗證，而 GamiPort 使用純 cookie 進行用戶驗證。
+
+  ---
+  第四部分：服務架構差異
+
+  4.1 服務註冊模式
+
+  GameSpace：擴充方法註冊 40+ 服務
+  // 在 Program.cs 中
+  builder.Services.AddMiniGameServices(builder.Configuration);
+
+  // 在 Areas/MiniGame/config/ServiceExtensions.cs 中
+  public static IServiceCollection AddMiniGameServices(...)
+  {
+      // 管理員服務
+      services.AddScoped<IMiniGameAdminService, MiniGameAdminService>();
+      services.AddScoped<IMiniGameAdminGate, MiniGameAdminGate>();
+
+      // 領域服務（Query/Mutation 分離）
+      services.AddScoped<IPetService, PetService>();
+      services.AddScoped<IPetQueryService, PetQueryService>();
+      services.AddScoped<IPetMutationService, PetMutationService>();
+
+      services.AddScoped<IWalletService, WalletService>();
+      services.AddScoped<IWalletQueryService, WalletQueryService>();
+      services.AddScoped<IWalletMutationService, WalletMutationService>();
+
+      // ... 30+ 更多服務
+      return services;
+  }
+
+  GamiPort：未註冊 MiniGame 服務
+  // 在 Program.cs 中 - 沒有 AddMiniGameServices() 呼叫
+  // 僅一般服務：
+  builder.Services.AddScoped<IChatService, ChatService>();
+  builder.Services.AddScoped<IRelationService, RelationService>();
+  builder.Services.AddScoped<IAppCurrentUser, AppCurrentUser>();
+
+  4.2 服務架構模式
+
+  GameSpace 模式：類 CQRS 分離
+  服務層（三層）：
+  ├── 協調器：MiniGameAdminService（門面）
+  ├── Query 服務：僅讀取操作，使用 AsNoTracking()
+  │   ├── PetQueryService
+  │   ├── WalletQueryService
+  │   ├── SignInQueryService
+  │   └── GameQueryService
+  └── Mutation 服務：寫入操作，使用交易
+      ├── PetMutationService
+      ├── WalletMutationService
+      ├── SignInMutationService
+      └── GameMutationService
+
+  GamiPort 模式：每功能一服務（更簡單）
+  服務層：
+  ├── ChatService（處理聊天 DB 操作）
+  ├── RelationService（好友管理）
+  ├── NotificationStore（記憶體內通知）
+  └── 尚無 MiniGame 服務
+
+  戰略建議：對於前台平台，您可能不需要完整的管理協調層。考慮實作更簡單的每功能一服務模式：
+  - PetClientService（面向前台的寵物操作）
+  - WalletClientService（用戶錢包操作）
+  - SignInClientService（用戶簽到）
+  - GamePlayClientService（遊戲遊玩操作）
+
+  ---
+  第五部分：控制器架構差異
+
+  5.1 基底控制器模式
+
+  GameSpace：MiniGameBaseController（關鍵基礎設施）
+
+  位置：GameSpace/Areas/MiniGame/Controllers/MiniGameBaseController.cs
+
+  [Area("MiniGame")]
+  [Authorize(AuthenticationSchemes = "AdminCookie", Policy = "AdminOnly")]
+  public abstract class MiniGameBaseController : Controller
+  {
+      protected readonly GameSpacedatabaseContext _context;
+      protected readonly IMiniGameAdminService _adminService;
+
+      // 20+ 工具方法：
+      protected int? GetCurrentManagerId();
+      protected Task<bool> HasPermissionAsync(string permission);
+      protected PagedResult<T> CreatePagedResult<T>(...);
+      protected IActionResult ValidationError(string message);
+      protected IActionResult NotFoundWithMessage(string message);
+      protected string FormatDateTime(DateTime dt);
+      protected string GenerateQRCode(string data);
+      // ... 更多
+  }
+
+  // 所有 28 個管理控制器都繼承此基底
+
+  GamiPort：無基底控制器（每個控制器獨立）
+
+  [Area("MiniGame")]
+  public class HomeController : Controller
+  {
+      public IActionResult Index() => View();
+  }
+
+  戰略建議：為 GamiPort 創建輕量級基底控制器：
+
+  [Area("MiniGame")]
+  [Authorize]  // 要求經過驗證的用戶（非管理員）
+  public abstract class MiniGameClientBaseController : Controller
+  {
+      protected readonly GameSpacedatabaseContext _context;
+      protected readonly IAppCurrentUser _currentUser;
+
+      protected async Task<int> GetCurrentUserIdAsync()
+      {
+          var uid = _currentUser.UserId;
+          return uid > 0 ? uid : await _currentUser.GetUserIdAsync();
+      }
+
+      protected PagedResult<T> CreatePagedResult<T>(...)
+      {
+          // 從 GameSpace 移植
+      }
+
+      protected IActionResult UserError(string message)
+      {
+          return BadRequest(new { error = message });
+      }
+  }
+
+  5.2 控制器數量與職責
+
+  GameSpace 控制器（共 32 個）：
+
+  管理控制器（13 個）：
+  - AdminHomeController - 管理儀表板
+  - AdminCouponController - 優惠券 CRUD
+  - AdminEVoucherController - 電子禮券 CRUD
+  - AdminPetController - 寵物管理操作
+  - AdminUserController - 用戶管理
+  - AdminManagerController - 經理管理
+  - AdminMiniGameController - 遊戲管理
+  - WalletAdminController - 錢包管理
+  - SignInAdminController - 簽到管理
+  - GameAdminController - 遊戲規則管理
+  - AdminDashboardController - 統計資料
+  - AdminDiagnosticsController - 系統健康
+  - AdminController - 一般管理
+
+  設定控制器（8 個）：
+  - PointsSettingsController
+  - PetColorChangeSettingsController
+  - PetBackgroundChangeSettingsController
+  - PetLevelExperienceSettingController
+  - PetLevelRewardSettingController
+  - PetLevelUpRuleController
+  - PetBackgroundCostSettingController
+  - PetSkinColorCostSettingController
+
+  公開控制器（2 個）：
+  - HomeController - 公開首頁
+  - CouponTypesController - 公開優惠券瀏覽
+
+  路由中心（1 個）：
+  - PetAdminController - 重定向到功能控制器
+
+  基底（1 個）：
+  - MiniGameBaseController
+
+  ---
+  GamiPort 控制器（共 1 個）：
+  - HomeController - 僅最小索引頁
+
+  戰略建議：為 GamiPort 前台平台實作面向用戶的控制器（非管理員）：
+
+  建議的前台控制器（基於規格）：
+  1. WalletController - 查看餘額、交易歷史
+  2. CouponController - 瀏覽/使用優惠券
+  3. EVoucherController - 瀏覽/使用電子禮券、QR 碼顯示
+  4. SignInController - 每日簽到與月曆視圖
+  5. PetController - 寵物互動、客製化
+  6. GameController - 開始遊戲會話、查看歷史
+  7. HomeController - MiniGame 前台首頁
+
+  ---
+  第六部分：過濾器與中介軟體差異
+
+  6.1 自訂過濾器
+
+  GameSpace（4 個自訂過濾器，位於 Areas/MiniGame/Filters/）：
+
+  | 過濾器                             | 目的                               | 用途                |
+  |---------------------------------|----------------------------------|-------------------|
+  | MiniGameAdminAuthorizeAttribute | 驗證管理員驗證與 DB 角色檢查                 | 套用於管理控制器          |
+  | MiniGameAdminOnlyAttribute      | 輕量級管理員檢查（僅 claims）               | [Authorize] 的替代方案 |
+  | MiniGameProblemDetailsFilter    | RFC 7231 Problem Details JSON 錯誤 | 全域例外處理            |
+  | IdempotencyFilter               | 防止重複請求（60 秒視窗）                   | 套用於變更端點           |
+
+  GamiPort：無自訂過濾器
+
+  戰略建議：將這些過濾器移植到 GamiPort 並進行修改：
+
+  1. 跳過管理過濾器 - 前台平台不需要
+  2. 移植 ProblemDetailsFilter - 對一致的 API 錯誤有用
+  3. 移植 IdempotencyFilter - 對防止雙重提交至關重要（例如雙重簽到、雙重優惠券兌換）
+  4. 創建新的：RateLimitFilter - 限制每日遊玩次數、每日簽到次數
+
+  ---
+  第七部分：Program.cs 配置差異
+
+  7.1 關鍵服務註冊
+
+  | 服務                        | GameSpace   | GamiPort    | 前台平台需求               |
+  |---------------------------|-------------|-------------|----------------------|
+  | MiniGame 服務               | ✅ 40+ 服務    | ❌ 無         | ✅ 需要面向前台的服務          |
+  | Session                   | ✅ 30 分鐘逾時   | ❌ 無 session | ⚠️ 可選（cookie 可能足夠）   |
+  | CORS                      | ✅ "chat" 政策 | ❌ 無         | ✅ SignalR 可能需要       |
+  | IUserContextReader        | ✅（面向管理員）    | ❌ 無         | ❌ 改用 IAppCurrentUser |
+  | IAppCurrentUser           | ❌ 無         | ✅（面向用戶）     | ✅ 已存在                |
+  | IManagerPermissionService | ✅（RBAC）     | ❌ 無         | ❌ 前台不需要              |
+  | SignalR 詳細錯誤              | ❌ 基本        | ✅ 已啟用       | ✅ 保持啟用               |
+
+  7.2 授權政策
+
+  GameSpace（7 個政策）：
+  options.AddPolicy("AdminOnly", p => p.RequireClaim("IsManager", "true"));
+  options.AddPolicy("CanManageShopping", p => p.RequireClaim("perm:Shopping", "true"));
+  options.AddPolicy("CanPet", p => p.RequireClaim("perm:Pet", "true"));
+  // ... + 4 個更多
+
+  GamiPort：無政策（使用預設授權）
+
+  戰略建議：對於前台平台，您通常不需要授權政策，因為所有經過驗證的用戶都有相同的權限。如果您需要分層存取（例如 VIP
+  用戶），請考慮：
+
+  options.AddPolicy("VIPOnly", p => p.RequireClaim("UserLevel", "VIP"));
+  options.AddPolicy("EmailVerified", p => p.RequireClaim("EmailConfirmed", "true"));
+
+  ---
+  第八部分：視圖與 UI 差異
+
+  8.1 版面配置策略
+
+  GameSpace：SB Admin 樣板（管理儀表板風格）
+  - 側邊欄與導航樹
+  - 資料表格，具備排序/分頁
+  - 表單密集的 CRUD 介面
+  - 面向管理員的配色方案
+  - 豐富的部分元件（_DataTable.cshtml、_StatisticsCard.cshtml 等）
+
+  GamiPort：Bootstrap 5 響應式版面配置
+  - 頂部導航列（Level 1 & Level 2）
+  - 用戶導航側邊欄
+  - 內容區域與右側廣告欄
+  - 用戶友善樣式
+  - 最小部分元件（僅基本 _Layout.cshtml）
+
+  戰略建議：GamiPort 的前台平台應該有用戶友善、遊戲化的 UI：
+  - 寵物、優惠券、禮券的卡片式版面配置
+  - 簽到的月曆視圖
+  - 快速操作的模態對話框
+  - 行動響應式設計（已有 Bootstrap 5）
+  - 電子禮券兌換的 QR 碼顯示
+  - 遊戲化元素（進度條、徽章、動畫）
+
+  8.2 共用部分元件
+
+  GameSpace（20+ 共用部分元件）：
+  - _AdminLayout.cshtml - 管理專用版面配置
+  - _MiniGameAdminTabs.cshtml - 管理的標籤導航
+  - _DataTable.cshtml - 可重用資料表格元件
+  - _StatisticsCard.cshtml - 儀表板統計卡片
+  - _LoadingSpinner.cshtml - 載入指示器
+  - _ValidationScriptsPartial.cshtml - 客戶端驗證
+  - _Chat.cshtml - 社交中心聊天整合
+
+  GamiPort：僅 _Layout.cshtml（基本框架）
+
+  戰略建議：為 GamiPort 創建面向用戶的部分元件：
+  - _PetCard.cshtml - 顯示寵物與 5 個屬性（飢餓、心情等）
+  - _CouponCard.cshtml - 優惠券顯示卡片
+  - _EVoucherQRCode.cshtml - 電子禮券的 QR 碼顯示
+  - _SignInCalendar.cshtml - 每月簽到月曆
+  - _WalletBalance.cshtml - 錢包餘額顯示小工具
+  - _GameSessionCard.cshtml - 遊戲遊玩摘要卡片
+  - _LoadingSpinner.cshtml - 載入指示器（從 GameSpace 移植）
+
+  ---
+  第九部分：戰略建議
+
+  優先級 1：基礎（第 1 週）
+
+  關鍵路徑：
+
+  1. 創建基底控制器（Areas/MiniGame/Controllers/MiniGameClientBaseController.cs）：
+  [Area("MiniGame")]
+  [Authorize]  // 所有前台功能需要驗證
+  public abstract class MiniGameClientBaseController : Controller
+  {
+      protected readonly GameSpacedatabaseContext _context;
+      protected readonly IAppCurrentUser _currentUser;
+
+      protected async Task<int> GetCurrentUserIdAsync() { ... }
+      protected PagedResult<T> CreatePagedResult<T>(...) { ... }
+  }
+  2. 創建服務註冊（Areas/MiniGame/config/ClientServiceExtensions.cs）：
+  public static IServiceCollection AddMiniGameClientServices(
+      this IServiceCollection services)
+  {
+      services.AddScoped<IPetClientService, PetClientService>();
+      services.AddScoped<IWalletClientService, WalletClientService>();
+      services.AddScoped<ISignInClientService, SignInClientService>();
+      services.AddScoped<IGamePlayClientService, GamePlayClientService>();
+      services.AddScoped<ICouponClientService, CouponClientService>();
+      services.AddScoped<IEVoucherClientService, EVoucherClientService>();
+      return services;
+  }
+  3. 在 Program.cs 中註冊：
+  builder.Services.AddMiniGameClientServices();
+  4. 移植必要的過濾器：
+    - IdempotencyFilter.cs（防止雙重提交）
+    - ProblemDetailsFilter.cs（一致的錯誤處理）
+
+  優先級 2：核心功能（第 2-3 週）
+
+  實作面向用戶的控制器與服務：
+
+  5. 錢包系統（查看當前會員點數餘額、收支明細）：
+    - Controllers/WalletController.cs
+    - Services/WalletClientService.cs
+    - Views/Wallet/Balance.cshtml、Views/Wallet/History.cshtml
+  6. 簽到系統（查看月曆型簽到簿並執行簽到）：
+    - Controllers/SignInController.cs
+    - Services/SignInClientService.cs
+    - Views/SignIn/Calendar.cshtml、Views/SignIn/History.cshtml
+  7. 寵物系統（寵物互動、換膚色、換背景）：
+    - Controllers/PetController.cs
+    - Services/PetClientService.cs
+    - Views/Pet/Index.cshtml、Views/Pet/Interact.cshtml、Views/Pet/Customize.cshtml
+
+  優先級 3：交易功能（第 4 週）
+
+  8. 優惠券系統（使用會員點數兌換商城優惠券）：
+    - Controllers/CouponController.cs
+    - Services/CouponClientService.cs
+    - Views/Coupon/Browse.cshtml、Views/Coupon/MyCoupons.cshtml、Views/Coupon/Redeem.cshtml
+  9. 電子禮券系統（兌換電子優惠券、QRCode 顯示）：
+    - Controllers/EVoucherController.cs
+    - Services/EVoucherClientService.cs
+    - Views/EVoucher/Browse.cshtml、Views/EVoucher/MyVouchers.cshtml、Views/EVoucher/QRCode.cshtml
+
+  優先級 4：遊戲遊玩（第 5 週）
+
+  10. 遊戲系統（出發冒險、查看遊戲紀錄）：
+    - Controllers/GameController.cs
+    - Services/GamePlayClientService.cs
+    - Views/Game/Start.cshtml、Views/Game/History.cshtml
+
+  優先級 5：潤色（第 6 週）
+
+  11. 共用部分元件與元件：
+    - 寵物顯示卡片
+    - 錢包小工具
+    - 簽到月曆元件
+    - QR 碼顯示
+    - 載入指示器
+  12. 行動響應性（已有 Bootstrap 5）
+  13. 錯誤處理與用戶反饋
+  14. 測試與錯誤修復
+
+  ---
+  第十部分：從 GAMESPACE 可重用的內容
+
+  ✅ 可直接移植（略作修改）：
+
+  1. 過濾器：IdempotencyFilter.cs、ProblemDetailsFilter.cs
+  2. ViewModels：大多數 ViewModel 可重用（移除僅管理員欄位）
+  3. 常數：所有 4 個常數檔案（PetConstants.cs、WalletConstants.cs 等）
+  4. 服務介面：大多數 I*Service.cs 介面（移除管理員專用方法）
+  5. 資料庫查詢：來自 *QueryService 類別的查詢邏輯
+  6. 分頁邏輯：PagedResult<T> 和分頁輔助方法
+  7. 驗證：ViewModel 驗證屬性
+
+  ⚠️ 需要調整：
+
+  1. 基底控制器：從 MiniGameBaseController 簡化為 MiniGameClientBaseController
+    - 移除管理員權限檢查
+    - 移除經理上下文
+    - 保留分頁、錯誤處理、工具方法
+  2. 服務：從三層（協調器/Query/Mutation）簡化為每功能一服務
+    - 移除 MiniGameAdminService 協調器（不需要）
+    - 將 Query/Mutation 合併到單一前台服務
+    - 移除僅管理員操作（創建/編輯規則、管理用戶）
+  3. 視圖：從管理表單重新設計為用戶友善介面
+    - 用卡片/網格取代資料表格
+    - 用操作模態對話框取代 CRUD 表單
+    - 增加遊戲化元素
+
+  ❌ 不要移植：
+
+  1. 管理控制器：所有 Admin*Controller.cs 檔案
+  2. 管理服務：MiniGameAdminService、MiniGameAdminGate、MiniGameAdminAuthService
+  3. 管理過濾器：MiniGameAdminAuthorizeAttribute、MiniGameAdminOnlyAttribute
+  4. 管理視圖：所有 Views/Admin*/ 資料夾
+  5. 設定控制器：與前台平台無關
+  6. 權限服務：IManagerPermissionService（僅管理員）
+  7. 用戶上下文讀取器：IUserContextReader（改用 IAppCurrentUser）
+
+  ---
+  第十一部分：程式碼範例 - 前台服務實作
+
+  範例：寵物前台服務（從 GameSpace 移植）
+
+  從 GameSpace（面向管理員）：
+  // GameSpace/Areas/MiniGame/Services/PetService.cs
+  public class PetService : IPetService
+  {
+      public async Task<Pet> GetPetByIdAsync(int petId);
+      public async Task<List<Pet>> GetAllPetsAsync();  // 僅管理員
+      public async Task UpdatePetAsync(Pet pet);       // 管理員可編輯任何寵物
+      public async Task<bool> ChangePetSkinColorAsync(int petId, string colorCode);
+      public async Task<bool> ChangePetBackgroundAsync(int petId, string bgCode);
+  }
+
+  到 GamiPort（面向前台）：
+  // GamiPort/Areas/MiniGame/Services/PetClientService.cs
+  public class PetClientService : IPetClientService
+  {
+      private readonly GameSpacedatabaseContext _db;
+      private readonly IAppCurrentUser _currentUser;
+
+      // 用戶只能訪問自己的寵物
+      public async Task<Pet?> GetMyPetAsync()
+      {
+          var userId = await _currentUser.GetUserIdAsync();
+          return await _db.Pets
+              .AsNoTracking()
+              .FirstOrDefaultAsync(p => p.UserId == userId && !p.IsDeleted);
+      }
+
+      // 用戶對自己寵物的操作
+      public async Task<bool> InteractWithPetAsync(string actionType)
+      {
+          // actionType: "feed", "bathe", "play", "sleep"
+          var userId = await _currentUser.GetUserIdAsync();
+          var pet = await _db.Pets.FirstOrDefaultAsync(p => p.UserId == userId);
+
+          // 套用互動獎勵（基於 PetInteractionBonusRules）
+          switch (actionType)
+          {
+              case "feed": pet.Hunger = Math.Min(100, pet.Hunger + 20); break;
+              case "bathe": pet.Cleanliness = Math.Min(100, pet.Cleanliness + 25); break;
+              // ... 等等
+          }
+
+          await _db.SaveChangesAsync();
+          return true;
+      }
+
+      public async Task<bool> ChangeSkinColorAsync(string colorCode, int pointsCost)
+      {
+          var userId = await _currentUser.GetUserIdAsync();
+
+          // 驗證用戶有足夠點數
+          var wallet = await _db.UserWallets.FirstOrDefaultAsync(w => w.UserId == userId);
+          if (wallet.UserPoint < pointsCost) return false;
+
+          using var transaction = await _db.Database.BeginTransactionAsync();
+          try
+          {
+              // 扣除點數
+              wallet.UserPoint -= pointsCost;
+
+              // 更新寵物
+              var pet = await _db.Pets.FirstOrDefaultAsync(p => p.UserId == userId);
+              pet.SkinColor = colorCode;
+              pet.SkinColorChangedTime = DateTime.UtcNow;
+              pet.PointsChanged_SkinColor = pointsCost;
+
+              // 記錄交易
+              _db.WalletHistories.Add(new WalletHistory
+              {
+                  UserId = userId,
+                  ChangeType = "SPEND",
+                  PointsChanged = -pointsCost,
+                  ItemCode = $"SKIN_{colorCode}",
+                  Description = "寵物換膚色",
+                  ChangeTime = DateTime.UtcNow
+              });
+
+              await _db.SaveChangesAsync();
+              await transaction.CommitAsync();
+              return true;
+          }
+          catch
+          {
+              await transaction.RollbackAsync();
+              return false;
+          }
+      }
+  }
+
+  ---
+  第十二部分：最終戰略行動計畫
+
+  階段 1：基礎設施設置（第 1-2 天）
+
+  - 創建 MiniGameClientBaseController.cs
+  - 創建 config/ClientServiceExtensions.cs
+  - 在 Program.cs 中註冊服務
+  - 移植 IdempotencyFilter 和 ProblemDetailsFilter
+  - 移植常數檔案（PetConstants.cs 等）
+
+  階段 2：錢包與簽到（第 3-5 天）
+
+  - 實作 WalletClientService + 控制器 + 視圖
+  - 實作 SignInClientService + 控制器 + 視圖
+  - 創建簽到月曆視圖元件
+  - 測試簽到流程與點數獎勵
+
+  階段 3：寵物系統（第 6-10 天）
+
+  - 實作 PetClientService + 控制器 + 視圖
+  - 創建寵物互動 UI（餵食、洗澡、玩耍、哄睡）
+  - 創建寵物客製化 UI（膚色、背景）
+  - 實作客製化購買的交易流程
+  - 測試寵物屬性更新和升級邏輯
+
+  階段 4：優惠券與電子禮券（第 11-14 天）
+
+  - 實作 CouponClientService + 控制器 + 視圖
+  - 實作 EVoucherClientService + 控制器 + 視圖
+  - 創建電子禮券兌換的 QR 碼生成
+  - 測試優惠券/禮券兌換流程
+  - 實作交易日誌
+
+  階段 5：遊戲遊玩（第 15-17 天）
+
+  - 實作 GamePlayClientService + 控制器 + 視圖
+  - 創建遊戲開始 UI 與會話追蹤
+  - 實作每日遊玩次數限制執行
+  - 創建遊戲歷史視圖
+  - 測試獎勵分配（點數、經驗、優惠券）
+
+  階段 6：潤色與測試（第 18-20 天）
+
+  - 創建共用部分視圖
+  - 實作行動響應性
+  - 增加載入指示器和用戶反饋
+  - 錯誤處理和邊緣情況
+  - 整合測試
+  - 效能優化
+
+  ---
+  總結：關鍵要點
+
+  1. GamiPort MiniGame 基本上是空的 - 您從零開始構建，以 GameSpace 為參考
+  2. 不要移植管理功能 - 僅專注於面向前台的功能
+  3. 簡化架構 - 前台平台不需要三層服務層或管理協調
+  4. 重用資料庫邏輯 - 查詢模式和驗證規則可以直接移植
+  5. 使用 IAppCurrentUser - 不要嘗試移植 IUserContextReader（對前台來說是錯誤的抽象）
+  6. 專注於 UX - 前台 UI 應該是遊戲化和行動友善的，而非管理風格表單
+  7. 實作冪等性 - 對防止重複簽到/兌換至關重要
+  8. 遵循規格 - README_合併版.md 第 3 節定義了確切需要的前台功能
+
+  您的預估時間表：完整前台平台實作需要 20 個工作日，假設您可以利用 GameSpace 60-70%
+  的業務邏輯，同時構建新的面向前台的 UI 和簡化的服務。
+
+
+
+● GameSpace（後台）與 GamiPort（前台）平台差異分析 --- **analyzed by codex**
+
+• 啟動與依賴註冊差異
+
+  - GameSpace 同時註冊 Identity 與業務 DbContext，分別指向 ApplicationDbContext 與 GameSpacedatabaseContext，顯示後台要
+    管帳號及營運資料 (GameSpace/Program.cs:45, GameSpace/Program.cs:46)；GamiPort 只保留一個 GameSpacedatabaseContext 供
+    前台讀寫 (GamiPort/Program.cs:41)。
+  - GameSpace 啟用 AddDefaultIdentity 強制信箱驗證，並搭配自訂 Admin Cookie 流程 (GameSpace/Program.cs:51, GameSpace/
+    Program.cs:133)；GamiPort 走純 Cookie Authentication + 自家 ClaimFirstLoginIdentity，偏向會員前台登入體驗 (GamiPort/
+    Program.cs:55, GamiPort/Program.cs:124)。
+  - GameSpace 注入 MiniGame 専用 Service 集合與多層授權/Session/CORS/偽冒防護，強化後台管理控管 (GameSpace/
+    Program.cs:71, GameSpace/Program.cs:106, GameSpace/Program.cs:117, GameSpace/Program.cs:192)；GamiPort 則著重聊天、
+    通知與即時互動相關服務 (GamiPort/Program.cs:78, GamiPort/Program.cs:84, GamiPort/Program.cs:87)。
+  - GameSpace 以 CookieAndAdminCookieLoginIdentity 管理雙 Cookie 驗證邏輯 (GameSpace/Infrastructure/Login/
+    CookieAndAdminCookieLoginIdentity.cs:13)；GamiPort 改以 ClaimFirstLoginIdentity 搭配 AppCurrentUser 解析目前會員
+    資訊，利於前台情境 (GamiPort/Infrastructure/Login/ClaimFirstLoginIdentity.cs:12, GamiPort/Infrastructure/Security/
+    AppCurrentUser.cs:14)。
+
+  資料夾與橫切服務
+
+  - GameSpace 的 Infrastructure 側重後台時間/時區工具 (IAppClock, TimeZones) 以支援報表與排程 (GameSpace/Infrastructure/
+    Time/AppClock.cs:10)；GamiPort 則新增 Infrastructure/Security 與 Services/CurrentUserService 等前台使用者上下文服務
+    (GamiPort/Infrastructure/Security/AppCurrentUser.cs:14, GamiPort/Services/CurrentUserService.cs:6)。
+  - GamiPort 新增 Services/ImagePathService 與 ViewComponents/TopbarLevel1ViewComponent，顯示前台需要共用 UI 元件與
+    圖片路徑計算 (GamiPort/Services/ImagePathService.cs:3, GamiPort/ViewComponents/TopbarLevel1ViewComponent.cs:7)；
+    GameSpace 後台沒有對應結構。
+  - GameSpace 保留 libman.json 管理 Font Awesome 靜態資產，提供後台圖示庫 (GameSpace/libman.json:1)；GamiPort 無
+    libman，代表前台改用自備素材或 CDN。
+  - Partials/GameSpacedatabaseContext 在 GameSpace 僅補足連線設定 (GameSpace/Partials/GameSpacedatabaseContext.cs:6)，而
+    GamiPort 版本額外載入設定檔並加上完整註解，利於獨立執行測試 (GamiPort/Partials/GameSpacedatabaseContext.cs:10)。
+
+  MiniGame 模組深度
+
+  - GameSpace 擁有大規模 MiniGame 註冊點與 DI 擴充 (GameSpace/Areas/MiniGame/config/ServiceExtensions.cs:9)，代表後台已
+    封裝完整營運邏輯。
+  - 後台 MiniGame 控制器涵蓋所有營運面向，例如寵物、錢包、簽到等多支專用 Controller (GameSpace/Areas/MiniGame/
+    Controllers/AdminPetController.cs:13 等)，而 GamiPort 僅剩一個對外的 HomeController (GamiPort/Areas/MiniGame/
+    Controllers/HomeController.cs:6)。
+  - GameSpace MiniGame 具備多層 Filter 與服務實作 (GameSpace/Areas/MiniGame/Filters/IdempotencyFilter.cs:10, GameSpace/
+    Areas/MiniGame/Services/PetService.cs:8)，顯示後台流程複雜；GamiPort 目前沒有對應的 Filters/Services 結構。
+  - GameSpace MiniGame 有完整的資料夾劃分（Constants、ViewModels、wwwroot 等），而 GamiPort MiniGame 目錄僅保留 Views/
+    Controllers，需重新評估哪些組件要複製到前台。
+
+  登入與介面差異
+
+  - GamiPort 新增 Areas/Login，將註冊、密碼、Email 驗證、簡介等流程集中於專屬區域，供前台會員操作 (GamiPort/Areas/Login/
+    Controllers/LoginController.cs:15 等)；GameSpace 仍由後台 MiniGame 或 Identity 區域處理登入。
+  - GameSpace 主視圖仍含 Views/Login 供後台登入使用 (GameSpace/Views/Login/_ViewStart.cshtml:1)，但 GamiPort 前台把登
+    入頁完全移到 Login 區域，主 Views 僅保留首頁與共用版型 (GamiPort/Views/Home/Index.cshtml:1, GamiPort/Views/Shared/
+    _Layout.cshtml:1)。
+  - GamiPort 透過 ICurrentUserService 讓 Razor 頁面可取得登入會員資訊 (GamiPort/Services/ICurrentUserService.cs:3)，
+    GameSpace 則靠後台 Claim 擴充處理授權。
+  - 前台多了 TopbarLevel1ViewComponent 給共用導覽列 (GamiPort/ViewComponents/TopbarLevel1ViewComponent.cs:7)，後台無此元
+    件，需要另行設計 UI 佈局策略。

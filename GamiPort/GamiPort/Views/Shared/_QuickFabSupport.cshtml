@@ -1,0 +1,161 @@
+﻿@* ================================================================
+   _QuickFabSupport.cshtml — 掛在 _QuickFab 的第二顆按鈕
+   內容：
+   - 主鈕（🛟）點了展開上方卡，卡裡兩顆圓：投訴 / 我的紀錄
+   - 不用 Bootstrap Dropdown/Popper，純手動切換 .show
+   - 綁「實體按鈕」click（不是事件委派），避免被 tooltip 擋到時沒反應
+   - 提供 window.open 的備援；Bootstrap 未載入時也能跑
+   端點：
+   - POST /social_hub/Support/CreateTicket
+   - GET  /social_hub/Support/MyTickets
+   - GET  /social_hub/Support/Ticket/{id}
+   ================================================================ *@
+
+<div class="quickfab-item" id="fabSupportItem">
+    <!-- 客訴主鈕 -->
+    <button type="button" class="gp-mini-fab js-fab-support" aria-expanded="false"
+            aria-controls="fabSupportMenu" title="客訴">
+        🛟
+    </button>
+
+    <!-- 上方靜態下拉卡 -->
+    <div class="dropdown-menu shadow rounded-3 p-3" id="fabSupportMenu"
+         role="menu" aria-hidden="true" style="display:none;">
+        <div class="d-flex justify-content-center gap-3">
+            <!-- 投訴 -->
+            <button type="button" class="btn btn-light rounded-circle p-3 js-support-compose" title="投訴">
+                <i class="bi bi-emoji-angry" style="font-size:1.35rem;"></i>
+            </button>
+            <!-- 我的紀錄 -->
+            <button type="button" class="btn btn-light rounded-circle p-3 js-support-mine" title="我的紀錄">
+                <i class="bi bi-inbox" style="font-size:1.35rem;"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    (() => {
+      const wrap = document.getElementById('fabSupportWrap') || document.getElementById('fabSupportItem').parentElement;
+      const root = document.getElementById('fabSupportItem');
+      const btn  = root.querySelector('.js-fab-support');
+      const menu = document.getElementById('fabSupportMenu');
+
+      // 工具
+      const getAfToken   = () => document.querySelector('meta[name="request-verification-token"]')?.content || '';
+      const dispatchCloseFab = () => window.dispatchEvent(new CustomEvent('gp-quickfab-close'));
+      const openInNewOrThis = (url) => window.open(url, '_blank') || (location.href = url);
+      const openTicket   = (id) => openInNewOrThis('/social_hub/Support/Ticket/' + encodeURIComponent(id));
+      const openMyTickets= () => openInNewOrThis('/social_hub/Support/MyTickets');
+
+      const showMenu = (open) => {
+        const willOpen = (open ?? menu.style.display === 'none');
+        menu.style.display = willOpen ? 'block' : 'none';
+        menu.classList.toggle('show', willOpen);
+        menu.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
+        btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        // 標記父層，讓 _QuickFab 把 tooltip 關掉
+        wrap.classList.toggle('menu-open', willOpen);
+      };
+
+      // 動態建立最小 Compose Modal（若不存在）
+      function ensureComposeModal(){
+        if(document.getElementById('supportComposeModal')) return;
+        const html = `
+    <div class="modal fade" id="supportComposeModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h6 class="modal-title">建立客訴工單</h6>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+          </div>
+          <div class="modal-body">
+            <form id="support-compose-form" onsubmit="return false;">
+              <div class="mb-3">
+                <label class="form-label">主旨 <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="support-subject" maxlength="100" required>
+              </div>
+              <div class="mb-0">
+                <label class="form-label">內容（可選）</label>
+                <textarea class="form-control" id="support-body" rows="3" maxlength="2000"></textarea>
+              </div>
+            </form>
+            <div class="small text-muted mt-2">送出後將建立工單並開啟對話頁。</div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+            <button id="btn-support-create" class="btn btn-primary">送出</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+      }
+
+      // === 綁「實體按鈕」點擊 ===
+
+      // 主鈕：打開/收合卡片
+      btn.addEventListener('click', (e)=>{ e.stopPropagation(); showMenu(); });
+
+      // 點卡片本體不冒泡，不讓 _QuickFab 的 document click 收合
+      menu.addEventListener('click', (e)=> e.stopPropagation());
+
+      // 點畫面其他區：關卡片
+      document.addEventListener('click', ()=> showMenu(false));
+
+      // 我的紀錄
+      root.querySelector('.js-support-mine').addEventListener('click', (e)=>{
+        e.stopPropagation();
+        showMenu(false);
+        dispatchCloseFab();
+        openMyTickets();
+      });
+
+      // 投訴（打開最小 modal；若尚未載入 Bootstrap，也提供 fallback）
+      root.querySelector('.js-support-compose').addEventListener('click', (e)=>{
+        e.stopPropagation();
+        showMenu(false);
+        dispatchCloseFab();
+        ensureComposeModal();
+        const el = document.getElementById('supportComposeModal');
+        if (window.bootstrap?.Modal) {
+          window.bootstrap.Modal.getOrCreateInstance(el).show();
+        } else {
+          // Fallback：沒有 Bootstrap JS 時，簡版 prompt
+          const subject = prompt('請輸入主旨：');
+          if (!subject) return;
+          createTicket(subject, '');
+        }
+      });
+
+      // 送出投訴（使用 fetch；成功後開啟工單）
+      document.addEventListener('click', async (e)=>{
+        if(!e.target.closest('#btn-support-create')) return;
+        const subject = (document.getElementById('support-subject')?.value || '').trim();
+        const body    = (document.getElementById('support-body')?.value || '').trim();
+        if(!subject){ alert('請輸入主旨'); return; }
+        await createTicket(subject, body, true);
+      });
+
+      async function createTicket(subject, body, hideModal=false){
+        const fd = new FormData();
+        fd.append('subject', subject);
+        fd.append('content', body||'');
+        try{
+          const res = await fetch('/social_hub/Support/CreateTicket', {
+            method:'POST', body:fd, credentials:'same-origin',
+            headers:{ 'X-Requested-With':'XMLHttpRequest', 'RequestVerificationToken': getAfToken() }
+          });
+          if(!res.ok){ alert('建立失敗'); return; }
+          const data = await res.json();
+          if(!data?.ok || !data?.ticketId){ alert('建立失敗'); return; }
+          if (hideModal && window.bootstrap?.Modal){
+            window.bootstrap.Modal.getOrCreateInstance(document.getElementById('supportComposeModal')).hide();
+          }
+          openTicket(data.ticketId);
+        }catch{
+          alert('建立失敗：網路或伺服器錯誤');
+        }
+      }
+    })();
+</script>

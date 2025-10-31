@@ -1,0 +1,249 @@
+﻿@* ================================================================
+   _QuickFab.cshtml — 右下角 +（Speed Dial）
+   重點：
+   1) 次級 FAB 統一 .gp-mini-fab（44x44）
+   2) 入場動畫 / ripple / 交錯延遲
+   3) 客訴下拉卡採「靜態定位」
+   4) 提供 gp-quickfab-close 事件讓子元件可關閉 Speed Dial
+   5) ★ 修正：.fab-tip 不吃滑鼠事件，避免擋住下拉卡的兩顆圓鈕
+   ================================================================ *@
+<style>
+    :root {
+        --fab-right: calc(env(safe-area-inset-right,0px) + 16px);
+        --fab-bottom: calc(env(safe-area-inset-bottom,0px) + 16px);
+    }
+
+    .gp-fab {
+        position: fixed;
+        right: var(--fab-right);
+        bottom: var(--fab-bottom);
+        z-index: 1080;
+    }
+
+        /* 主 + 按鈕 */
+        .gp-fab .fab-main {
+            width: 56px;
+            height: 56px;
+            border-radius: 999px;
+            border: 0;
+            background: #0d6efd;
+            color: #fff;
+            box-shadow: 0 12px 32px rgba(13,110,253,.35);
+            cursor: pointer;
+            font-size: 22px;
+            cursor: pointer;
+            box-shadow: 0 12px 32px rgba(13,110,253,.35);
+        }
+
+        /* 展開容器 */
+        .gp-fab .fab-actions {
+            position: absolute;
+            right: 10px;
+            bottom: 72px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            pointer-events: none;
+        }
+
+        .gp-fab.open .fab-actions {
+            pointer-events: auto;
+        }
+
+        .gp-fab .fab-wrap {
+            position: relative;
+        }
+
+        /* 提示小黑條 — 只顯示，不吃滑鼠事件（關鍵）*/
+        .gp-fab .fab-tip {
+            position: absolute;
+            right: 52px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #111827;
+            color: #fff;
+            font-size: .75rem;
+            padding: 4px 6px;
+            border-radius: 6px;
+            white-space: nowrap;
+            display: none;
+            pointer-events: none;
+        }
+
+        .gp-fab .fab-wrap:hover .fab-tip {
+            display: block;
+        }
+
+        .gp-fab .fab-wrap.menu-open .fab-tip {
+            display: none !important;
+        }
+        /* 展開客訴卡時隱藏提示 */
+
+        /* 次級 FAB 統一樣式 */
+        .gp-fab .gp-mini-fab {
+            width: 44px;
+            height: 44px;
+            border-radius: 999px;
+            border: 0;
+            background: #fff;
+            color: #111827;
+            box-shadow: 0 10px 24px rgba(0,0,0,.16);
+            cursor: pointer;
+            box-shadow: 0 10px 24px rgba(0,0,0,.16);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            position: relative;
+            overflow: hidden;
+            transform: translateY(8px) scale(.92);
+            opacity: 0;
+            will-change: transform,opacity;
+            transition: opacity .18s, transform .18s;
+            font-size: 18px;
+        }
+
+        .gp-fab.open .gp-mini-fab {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+            animation: f-pop .22s cubic-bezier(.2,.8,.2,1) var(--delay) both;
+        }
+
+        .gp-fab .gp-mini-fab:hover {
+            transform: translateY(0) scale(1.05);
+        }
+
+        .gp-fab .gp-mini-fab:active {
+            transform: translateY(0) scale(.96);
+            transition-duration: .06s;
+        }
+
+        .gp-fab .gp-mini-fab::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background: rgba(13,110,253,.12);
+            transform: scale(0);
+            opacity: 0;
+            transition: transform .28s,opacity .28s;
+        }
+
+        .gp-fab .gp-mini-fab:active::after {
+            transform: scale(1);
+            opacity: 1;
+        }
+
+        /* 入場交錯延遲 */
+        .gp-fab .fab-actions .fab-wrap {
+            --delay: 0ms;
+        }
+
+            .gp-fab .fab-actions .fab-wrap:nth-child(1) {
+                --delay: 0ms;
+            }
+
+            .gp-fab .fab-actions .fab-wrap:nth-child(2) {
+                --delay: 35ms;
+        }
+
+            .gp-fab .fab-actions .fab-wrap:nth-child(3) {
+                --delay: 70ms;
+        }
+
+        /* 客訴下拉卡：靜態定位（避免跟 transform 打架）*/
+        .gp-fab .quickfab-item .dropdown-menu {
+            position: absolute;
+            bottom: 52px;
+            right: 0;
+            transform: none !important;
+            margin: 0;
+            min-width: 180px;
+            z-index: 1090;
+        }
+
+    /* Razor in-page CSS 需 @@ */
+    @@keyframes f-pop {
+        0% {
+            transform: translateY(8px) scale(.86);
+            opacity: 0;
+        }
+
+        60% {
+            transform: translateY(-1px) scale(1.02);
+            opacity: 1;
+        }
+
+        100% {
+            transform: translateY(0) scale(1);
+            opacity: 1;
+        }
+        }
+
+    @@media (max-width:420px) {
+        .gp-fab {
+            right: calc(env(safe-area-inset-right,0px) + 8px);
+        }
+    }
+
+    @@media (prefers-reduced-motion: reduce) {
+        .gp-fab .gp-mini-fab, .gp-fab.open .gp-mini-fab {
+            animation: none !important;
+            transition: none !important;
+            transform: none !important;
+        }
+    }
+</style>
+
+<div class="gp-fab" id="QuickFab" aria-hidden="false">
+    <!-- 主「＋」 -->
+    <button class="fab-main" id="fabMain" aria-expanded="false" title="快速動作">＋</button>
+
+    <div class="fab-actions" aria-hidden="true">
+        <!-- 動作1：好友清單 -->
+        <div class="fab-wrap">
+            <button class="gp-mini-fab" id="fabFriends" aria-label="好友清單">💬</button>
+            <div class="fab-tip">好友清單</div>
+        </div>
+
+        <!-- 動作2：客訴（子 partial 會畫主鈕與下拉卡） -->
+        <div class="fab-wrap" id="fabSupportWrap">
+            @await Html.PartialAsync("_QuickFabSupport")
+            <div class="fab-tip">客訴</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (() => {
+      const fab  = document.getElementById('QuickFab');
+      const main = document.getElementById('fabMain');
+      const btnF = document.getElementById('fabFriends');
+
+      function setOpen(open){
+        fab.classList.toggle('open', open);
+        main.setAttribute('aria-expanded', open ? 'true' : 'false');
+      }
+
+      // 主 +：展開/收合
+      main.addEventListener('click', (e)=>{ e.stopPropagation(); setOpen(!fab.classList.contains('open')); });
+
+      // 點頁面其他處：收合
+      document.addEventListener('click', ()=> setOpen(false));
+
+      // 讓子元件可要求關閉（例如選了「投訴/我的紀錄」）
+      window.addEventListener('gp-quickfab-close', ()=> setOpen(false));
+
+      // 好友清單：切換 FriendDock（未就緒時等待事件）
+      btnF.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        if(window.FriendDock?.toggle){ window.FriendDock.toggle(); }
+        else{
+          // 若 FriendDock 尚未就緒，等到它發出 gp-friend-ready 再觸發一次
+          const once = ()=>{ window.removeEventListener('gp-friend-ready', once); window.FriendDock?.toggle?.(); };
+          window.addEventListener('gp-friend-ready', once, { once:true });
+        }
+        setOpen(false);
+      }, { passive:true });
+    })();
+</script>
